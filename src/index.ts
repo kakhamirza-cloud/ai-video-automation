@@ -68,25 +68,39 @@ app.post('/render', async (req, res) => {
     // Optional: upload to Google Drive (set env vars on Railway to get shareable link)
     const drive = getDriveClient();
     if (drive) {
-      const fileName = `ai-video-${Date.now()}.mp4`;
-      const {data: file} = await drive.files.create({
-        requestBody: {name: fileName, parents: [process.env.DRIVE_FOLDER_ID!]},
-        media: {mimeType: 'video/mp4', body: createReadStream(output)},
-        fields: 'id, webViewLink, webContentLink',
-        supportsAllDrives: true,
-      });
-      await drive.permissions.create({
-        fileId: file.id!,
-        requestBody: {role: 'reader', type: 'anyone'},
-        supportsAllDrives: true,
-      });
-      await fs.unlink(output).catch(() => {});
-      return res.json({
-        status: 'ok',
-        outputPath: output,
-        webViewLink: file.webViewLink,
-        webContentLink: file.webContentLink,
-      });
+      try {
+        const fileName = `ai-video-${Date.now()}.mp4`;
+        const {data: file} = await drive.files.create({
+          requestBody: {name: fileName, parents: [process.env.DRIVE_FOLDER_ID!]},
+          media: {mimeType: 'video/mp4', body: createReadStream(output)},
+          fields: 'id, webViewLink, webContentLink',
+          supportsAllDrives: true,
+        });
+        await drive.permissions.create({
+          fileId: file.id!,
+          requestBody: {role: 'reader', type: 'anyone'},
+          supportsAllDrives: true,
+        });
+        await fs.unlink(output).catch(() => {});
+        return res.json({
+          status: 'ok',
+          outputPath: output,
+          webViewLink: file.webViewLink,
+          webContentLink: file.webContentLink,
+        });
+      } catch (driveErr: unknown) {
+        const msg = driveErr instanceof Error ? driveErr.message : String(driveErr);
+        if (msg.includes('storage quota') || msg.includes('do not have storage quota')) {
+          await fs.unlink(output).catch(() => {});
+          return res.json({
+            status: 'ok',
+            outputPath: output,
+            driveUpload: 'skipped',
+            message: 'Video rendered. Drive upload failed (service account quota). Use a Workspace Shared Drive or omit Drive env vars.',
+          });
+        }
+        throw driveErr;
+      }
     }
 
     return res.json({
