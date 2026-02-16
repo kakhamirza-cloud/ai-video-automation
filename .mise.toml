@@ -1,4 +1,0 @@
-# Only Node – do NOT install ffmpeg here (mise builds it from source and fails).
-# FFmpeg must be installed by Railway: set variable RAILPACK_PACKAGES=ffmpeg
-[tools]
-node = "22"
