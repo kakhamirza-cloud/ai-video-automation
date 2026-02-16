@@ -1,0 +1,3 @@
+# Railway/Nixpacks: install FFmpeg so Remotion can render video
+[phases.setup]
+nixPkgs = ["ffmpeg"]
