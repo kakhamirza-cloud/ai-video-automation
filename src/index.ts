@@ -25,6 +25,7 @@ function getDriveClient(): ReturnType<typeof google.drive> | null {
     email,
     key,
     scopes: ['https://www.googleapis.com/auth/drive.file'],
+    subject: process.env.GOOGLE_IMPERSONATE_USER || undefined,
   });
   return google.drive({version: 'v3', auth});
 }
@@ -72,10 +73,12 @@ app.post('/render', async (req, res) => {
         requestBody: {name: fileName, parents: [process.env.DRIVE_FOLDER_ID!]},
         media: {mimeType: 'video/mp4', body: createReadStream(output)},
         fields: 'id, webViewLink, webContentLink',
+        supportsAllDrives: true,
       });
       await drive.permissions.create({
         fileId: file.id!,
         requestBody: {role: 'reader', type: 'anyone'},
+        supportsAllDrives: true,
       });
       await fs.unlink(output).catch(() => {});
       return res.json({
