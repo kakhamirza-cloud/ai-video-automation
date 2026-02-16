@@ -79,6 +79,7 @@ git push -u origin main
    - `GOOGLE_CLIENT_EMAIL` – from your service account JSON
    - `GOOGLE_PRIVATE_KEY` – private key (replace `\n` with real newlines if needed)
    - `DRIVE_FOLDER_ID` – ID of the folder where videos should go (share the folder with the service account email)
+   - **Or use Cloudinary** (no quota issues): `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` from [cloudinary.com/console](https://cloudinary.com/console). Optional: `CLOUDINARY_FOLDER` (e.g. `ai-video`).
    - **`RAILPACK_DEPLOY_APT_PACKAGES`** – set to **`ffmpeg`** (apt, not mise) (required for Remotion to render video on Railway). If you use Nixpacks instead, the repo’s `nixpacks.toml` already adds FFmpeg.
    - `PORT` – Railway sets this automatically; don’t override unless needed.
 5. Deploy. Railway will give you a URL like **https://ai-video-automation-production-xxxx.up.railway.app**.
@@ -90,7 +91,7 @@ $body = @{ lines = @("Hook","Point 1","Point 2","CTA") } | ConvertTo-Json
 Invoke-WebRequest -Uri "https://YOUR-RAILWAY-URL.up.railway.app/render" -Method POST -ContentType "application/json" -Body $body -UseBasicParsing
 ```   
 
-If Drive is configured, the JSON response will include `webViewLink` and `webContentLink`. Without Drive, the video is rendered on the server but not stored long-term (ephemeral filesystem).
+If Cloudinary is configured, the response includes `videoUrl` (shareable link). If Drive is configured, you get `webViewLink` / `webContentLink`. With neither, the video is rendered only on the server (ephemeral).
 
 ---
 

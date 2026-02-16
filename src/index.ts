@@ -5,6 +5,7 @@ import path from 'path';
 import fs from 'fs/promises';
 import {createReadStream} from 'fs';
 import {google} from 'googleapis';
+import {v2 as cloudinary} from 'cloudinary';
 
 const app = express();
 app.use(express.json());
@@ -64,6 +65,24 @@ app.post('/render', async (req, res) => {
       outputLocation: output,
       inputProps: {lines},
     });
+
+    // Optional: upload to Cloudinary (no quota issues; set CLOUDINARY_* env vars)
+    const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+    const apiKey = process.env.CLOUDINARY_API_KEY;
+    const apiSecret = process.env.CLOUDINARY_API_SECRET;
+    if (cloudName && apiKey && apiSecret) {
+      cloudinary.config({cloud_name: cloudName, api_key: apiKey, api_secret: apiSecret});
+      const result = await cloudinary.uploader.upload(output, {
+        resource_type: 'video',
+        folder: process.env.CLOUDINARY_FOLDER || 'ai-video',
+      });
+      await fs.unlink(output).catch(() => {});
+      return res.json({
+        status: 'ok',
+        outputPath: output,
+        videoUrl: result.secure_url,
+      });
+    }
 
     // Optional: upload to Google Drive (set env vars on Railway to get shareable link)
     const drive = getDriveClient();
