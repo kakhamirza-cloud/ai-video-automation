@@ -4,15 +4,22 @@ import {bundle} from '@remotion/bundler';
 import path from 'path';
 import fs from 'fs/promises';
 import {createReadStream} from 'fs';
+import {execFile} from 'child_process';
+import {promisify} from 'util';
 import {google} from 'googleapis';
 import {v2 as cloudinary} from 'cloudinary';
+
+const execFileAsync = promisify(execFile);
+const FPS = 30;
 
 const app = express();
 app.use(express.json());
 
 // First route: so http://localhost:8080 works in browser
 app.get('/', (req, res) => {
-  res.send('Server is running. POST to /render to generate a video.');
+  res.send(
+    'Server is running. POST /render (lines only) or /render-edit (videoUrl + lines) to generate or edit a video.'
+  );
 });
 
 let bundledLocation: string | null = null;
@@ -38,6 +45,25 @@ async function getBundle() {
     });
   }
   return bundledLocation;
+}
+
+/** Get video duration in seconds via ffprobe (for EditVideo composition). */
+async function getVideoDurationSeconds(videoUrl: string): Promise<number> {
+  try {
+    const {stdout} = await execFileAsync('ffprobe', [
+      '-v',
+      'error',
+      '-show_entries',
+      'format=duration',
+      '-of',
+      'default=noprint_wrappers=1:nokey=1',
+      videoUrl,
+    ]);
+    const sec = parseFloat(stdout.trim());
+    return Number.isFinite(sec) && sec > 0 ? sec : 30;
+  } catch {
+    return 30;
+  }
 }
 
 app.post('/render', async (req, res) => {
@@ -134,6 +160,125 @@ app.post('/render', async (req, res) => {
     // Ensure client gets the message so you can see it in the other PowerShell
     return res.status(500).json({
       error: 'render_failed',
+      message,
+    });
+  }
+});
+
+/**
+ * Edit an existing video (e.g. from Seed Dance 2): add caption overlays and upload to Cloudinary/Drive.
+ * Body: { videoUrl: string, lines: string[], durationSeconds?: number }
+ */
+app.post('/render-edit', async (req, res) => {
+  console.log('POST /render-edit received');
+  try {
+    const {videoUrl, lines, durationSeconds: bodyDuration} = req.body as {
+      videoUrl?: string;
+      lines?: string[];
+      durationSeconds?: number;
+    };
+    if (!videoUrl || typeof videoUrl !== 'string' || videoUrl.trim() === '') {
+      return res.status(400).json({error: 'videoUrl_required'});
+    }
+    const captionLines = Array.isArray(lines) && lines.length > 0 ? lines : [''];
+
+    const durationSeconds =
+      typeof bodyDuration === 'number' && bodyDuration > 0
+        ? bodyDuration
+        : await getVideoDurationSeconds(videoUrl.trim());
+    const durationInFrames = Math.ceil(durationSeconds * FPS);
+
+    const serveUrl = await getBundle();
+    const composition = await selectComposition({
+      serveUrl,
+      id: 'EditVideo',
+      inputProps: {
+        videoUrl: videoUrl.trim(),
+        lines: captionLines,
+        durationInFrames,
+      },
+    });
+    const outDir = path.join(process.cwd(), 'out');
+    await fs.mkdir(outDir, {recursive: true});
+    const output = path.join(outDir, `edit-${Date.now()}.mp4`);
+
+    await renderMedia({
+      serveUrl,
+      composition,
+      codec: 'h264',
+      outputLocation: output,
+      inputProps: {
+        videoUrl: videoUrl.trim(),
+        lines: captionLines,
+        durationInFrames,
+      },
+    });
+
+    const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+    const apiKey = process.env.CLOUDINARY_API_KEY;
+    const apiSecret = process.env.CLOUDINARY_API_SECRET;
+    if (cloudName && apiKey && apiSecret) {
+      cloudinary.config({cloud_name: cloudName, api_key: apiKey, api_secret: apiSecret});
+      const result = await cloudinary.uploader.upload(output, {
+        resource_type: 'video',
+        folder: process.env.CLOUDINARY_FOLDER || 'ai-video',
+      });
+      await fs.unlink(output).catch(() => {});
+      return res.json({
+        status: 'ok',
+        outputPath: output,
+        videoUrl: result.secure_url,
+      });
+    }
+
+    const drive = getDriveClient();
+    if (drive) {
+      try {
+        const fileName = `ai-video-edit-${Date.now()}.mp4`;
+        const {data: file} = await drive.files.create({
+          requestBody: {name: fileName, parents: [process.env.DRIVE_FOLDER_ID!]},
+          media: {mimeType: 'video/mp4', body: createReadStream(output)},
+          fields: 'id, webViewLink, webContentLink',
+          supportsAllDrives: true,
+        });
+        await drive.permissions.create({
+          fileId: file.id!,
+          requestBody: {role: 'reader', type: 'anyone'},
+          supportsAllDrives: true,
+        });
+        await fs.unlink(output).catch(() => {});
+        return res.json({
+          status: 'ok',
+          outputPath: output,
+          webViewLink: file.webViewLink,
+          webContentLink: file.webContentLink,
+        });
+      } catch (driveErr: unknown) {
+        const msg = driveErr instanceof Error ? driveErr.message : String(driveErr);
+        if (msg.includes('storage quota') || msg.includes('do not have storage quota')) {
+          await fs.unlink(output).catch(() => {});
+          return res.json({
+            status: 'ok',
+            outputPath: output,
+            driveUpload: 'skipped',
+            message: 'Video rendered. Drive upload failed (service account quota).',
+          });
+        }
+        throw driveErr;
+      }
+    }
+
+    return res.json({
+      status: 'ok',
+      outputPath: output,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const stack = err instanceof Error ? err.stack : undefined;
+    console.error('Render-edit error:', message);
+    if (stack) console.error(stack);
+    return res.status(500).json({
+      error: 'render_edit_failed',
       message,
     });
   }
