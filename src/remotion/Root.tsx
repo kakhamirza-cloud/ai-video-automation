@@ -28,6 +28,10 @@ export const RemotionRoot: React.FC = () => {
           videoUrl: '',
           lines: ['Placeholder'],
           durationInFrames: 60 * FPS,
+          musicUrl: undefined,
+          voiceoverUrl: undefined,
+          logoUrl: undefined,
+          primaryColor: undefined,
         }}
         calculateMetadata={({props}) => ({
           durationInFrames:

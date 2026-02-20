@@ -167,15 +167,28 @@ app.post('/render', async (req, res) => {
 
 /**
  * Edit an existing video (e.g. from Seed Dance 2): add caption overlays and upload to Cloudinary/Drive.
- * Body: { videoUrl: string, lines: string[], durationSeconds?: number }
+ * Body: { videoUrl, lines, durationSeconds?, musicUrl?, voiceoverUrl?, logoUrl?, primaryColor? }
+ * All of musicUrl, voiceoverUrl, logoUrl, primaryColor are optional; omit and flow is unchanged.
  */
 app.post('/render-edit', async (req, res) => {
   console.log('POST /render-edit received');
   try {
-    const {videoUrl, lines, durationSeconds: bodyDuration} = req.body as {
+    const {
+      videoUrl,
+      lines,
+      durationSeconds: bodyDuration,
+      musicUrl,
+      voiceoverUrl,
+      logoUrl,
+      primaryColor,
+    } = req.body as {
       videoUrl?: string;
       lines?: string[];
       durationSeconds?: number;
+      musicUrl?: string;
+      voiceoverUrl?: string;
+      logoUrl?: string;
+      primaryColor?: string;
     };
     if (!videoUrl || typeof videoUrl !== 'string' || videoUrl.trim() === '') {
       return res.status(400).json({error: 'videoUrl_required'});
@@ -188,15 +201,21 @@ app.post('/render-edit', async (req, res) => {
         : await getVideoDurationSeconds(videoUrl.trim());
     const durationInFrames = Math.ceil(durationSeconds * FPS);
 
+    const inputProps: Record<string, unknown> = {
+      videoUrl: videoUrl.trim(),
+      lines: captionLines,
+      durationInFrames,
+    };
+    if (typeof musicUrl === 'string' && musicUrl.trim()) inputProps.musicUrl = musicUrl.trim();
+    if (typeof voiceoverUrl === 'string' && voiceoverUrl.trim()) inputProps.voiceoverUrl = voiceoverUrl.trim();
+    if (typeof logoUrl === 'string' && logoUrl.trim()) inputProps.logoUrl = logoUrl.trim();
+    if (typeof primaryColor === 'string' && primaryColor.trim()) inputProps.primaryColor = primaryColor.trim();
+
     const serveUrl = await getBundle();
     const composition = await selectComposition({
       serveUrl,
       id: 'EditVideo',
-      inputProps: {
-        videoUrl: videoUrl.trim(),
-        lines: captionLines,
-        durationInFrames,
-      },
+      inputProps,
     });
     const outDir = path.join(process.cwd(), 'out');
     await fs.mkdir(outDir, {recursive: true});
@@ -207,11 +226,7 @@ app.post('/render-edit', async (req, res) => {
       composition,
       codec: 'h264',
       outputLocation: output,
-      inputProps: {
-        videoUrl: videoUrl.trim(),
-        lines: captionLines,
-        durationInFrames,
-      },
+      inputProps,
     });
 
     const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
